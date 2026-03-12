@@ -9,24 +9,30 @@ import time
 # --- 1. CONFIGURACIÓN DE CONEXIÓN ---
 
 
+# Reemplazá tu función obtener_cliente por esta:
 def obtener_cliente():
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
     ]
 
-    # Prioridad 1: Render (Variable de entorno)
     if "GOOGLE_CREDENTIALS" in os.environ:
         creds_info = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
-    else:
-        # Prioridad 2: Celular/PC (Archivo local en assets)
-        # Usamos una ruta relativa simple para el APK
-        creds = ServiceAccountCredentials.from_json_keyfile_name(
-            "assets/creds.json", scope
+        return gspread.authorize(
+            ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         )
 
-    return gspread.authorize(creds)
+    # Intentar rutas comunes para el celular y PC
+    rutas_posibles = ["assets/creds.json", "creds.json"]
+    for ruta in rutas_posibles:
+        if os.path.exists(ruta):
+            return gspread.authorize(
+                ServiceAccountCredentials.from_json_keyfile_name(ruta, scope)
+            )
+
+    raise FileNotFoundError(
+        "No se encontró el archivo creds.json en ninguna ruta conocida."
+    )
 
 
 # ... (Tus funciones obtener_o_crear_pestana y aplicar_estilos_y_totales quedan igual) ...
