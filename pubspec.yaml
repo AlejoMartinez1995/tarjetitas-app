@@ -1,0 +1,19 @@
+name: tarjetitas
+description: App de control de gastos personales.
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flet: ^0.21.0 # O la versión que estés usando
+
+dev_dependencies:
+  flutter_launcher_icons: "^0.13.1"
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: false
+  image_path: "assets/icon.jpg" # Acá ya le puse tu JPEG
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/icon.jpg"
