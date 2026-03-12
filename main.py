@@ -17,7 +17,7 @@ def obtener_cliente():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
     else:
         # Si estás en tu PC, sigue buscando el archivo local
-        creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name("assets/creds.json", scope)
 
     return gspread.authorize(creds)
 
