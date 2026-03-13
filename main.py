@@ -1,29 +1,29 @@
 import flet as ft
 from datetime import datetime
 import gspread
-# Usamos estas librerías que NO piden wsgiref
-from google.oauth2.service_account import Credentials 
+
+# Usamos google-auth para evitar el error de 'wsgiref' en Android
+from google.oauth2.service_account import Credentials
 import os
 import json
 import time
 
 # --- 1. CONFIGURACIÓN DE CONEXIÓN ---
 
+
 def obtener_cliente():
-    # Definimos los permisos necesarios
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
 
-    # Prioridad 1: Render (Variable de entorno para la web)
+    # Prioridad 1: Render (Variable de entorno)
     if "GOOGLE_CREDENTIALS" in os.environ:
         creds_info = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
         creds = Credentials.from_service_account_info(creds_info, scopes=scope)
         return gspread.authorize(creds)
 
     # Prioridad 2: Celular/PC (Archivo local en assets)
-    # IMPORTANTE: En Android la ruta debe ser exacta
     rutas_posibles = ["assets/creds.json", "creds.json"]
     for ruta in rutas_posibles:
         if os.path.exists(ruta):
@@ -32,7 +32,9 @@ def obtener_cliente():
 
     raise FileNotFoundError("No se encontró el archivo creds.json")
 
-# ... (El resto de tus funciones cargar_gasto, aplicar_estilos, etc. se mantienen)
+
+# --- 2. FUNCIONES DE GOOGLE SHEETS ---
+
 
 def obtener_o_crear_pestana(spreadsheet, año):
     nombre = f"Gastos {año}"
@@ -121,6 +123,7 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
         data = sheet.get_all_values()
         f_ins = None
         en_bloque_tarjeta = False
+
         for i, row in enumerate(data):
             f_str = " ".join(row).upper()
             if tarjeta.upper() in f_str and "TOTAL" not in f_str:
@@ -167,6 +170,7 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
             values=[fila_datos],
             value_input_option="USER_ENTERED",
         )
+
         pintar = (
             ultima_idx
             if (
@@ -175,6 +179,7 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
             )
             else None
         )
+
         aplicar_estilos_y_totales(sheet, f_ins, responsable, pintar, tarjeta)
         return f_ins
 
@@ -184,7 +189,7 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
     return fila_26
 
 
-# --- 4. INTERFAZ FLET CON PANTALLA DE CARGA ---
+# --- 4. INTERFAZ FLET ---
 
 
 def main(page: ft.Page):
@@ -194,7 +199,6 @@ def main(page: ft.Page):
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
-    # Componente de la pantalla de carga
     splash = ft.Column(
         [
             ft.Image(src="icon.jpg", width=120, height=120, border_radius=60),
@@ -208,23 +212,20 @@ def main(page: ft.Page):
     page.add(splash)
     page.update()
 
-    # Intentamos la conexión inicial
     try:
-        # Esto verifica si las credenciales son válidas antes de mostrar la app
         obtener_cliente()
-        time.sleep(1.5)  # Para que se aprecie el logo un momento
+        time.sleep(1)
     except Exception as e:
         page.clean()
-        page.add(ft.Icon(ft.icons.ERROR_OUTLINE, color="red", size=50))
+        # CORREGIDO: Se usa ft.Icons (con I mayúscula) para evitar error en Render
+        page.add(ft.Icon(name=ft.Icons.ERROR_OUTLINE, color="red", size=50))
         page.add(ft.Text(f"Error de inicio: {e}", color="red", text_align="center"))
         page.update()
         return
 
-    # Si todo sale bien, limpiamos y armamos la interfaz real
     page.clean()
     page.vertical_alignment = ft.MainAxisAlignment.START
 
-    # --- ELEMENTOS DE LA INTERFAZ ---
     tar = ft.Dropdown(
         label="Tarjeta",
         value="VISA",
@@ -239,26 +240,28 @@ def main(page: ft.Page):
         options=[ft.dropdown.Option("Ale"), ft.dropdown.Option("Lu")],
         expand=True,
     )
+
+    meses_lista = [
+        "Enero",
+        "Febrero",
+        "Marzo",
+        "Abril",
+        "Mayo",
+        "Junio",
+        "Julio",
+        "Agosto",
+        "Septiembre",
+        "Octubre",
+        "Noviembre",
+        "Diciembre",
+    ]
+
+    mes_actual_idx = datetime.now().month - 1
+
     mes = ft.Dropdown(
         label="Mes de Inicio",
-        value=datetime.now().strftime("%B").capitalize(),
-        options=[
-            ft.dropdown.Option(m)
-            for m in [
-                "Enero",
-                "Febrero",
-                "Marzo",
-                "Abril",
-                "Mayo",
-                "Junio",
-                "Julio",
-                "Agosto",
-                "Septiembre",
-                "Octubre",
-                "Noviembre",
-                "Diciembre",
-            ]
-        ],
+        value=meses_lista[mes_actual_idx],
+        options=[ft.dropdown.Option(m) for m in meses_lista],
         expand=True,
     )
     st = ft.Text("")
@@ -310,5 +313,4 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    # Importante: assets_dir le dice a Flet dónde están las imágenes y el json
     ft.app(target=main, assets_dir="assets")
