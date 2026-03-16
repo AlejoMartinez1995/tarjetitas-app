@@ -1,3 +1,7 @@
-flet==0.21.2
+flet
 gspread
 google-auth
+google-auth-oauthlib
+google-auth-httplib2
+urllib3
+idna

@@ -1,9 +1,6 @@
 import flet as ft
 from datetime import datetime
 import gspread
-
-# Usamos google-auth para evitar el error de 'wsgiref' en Android
-from google.oauth2.service_account import Credentials
 import os
 import json
 import time
@@ -12,25 +9,27 @@ import time
 
 
 def obtener_cliente():
+    # El scope necesario para Sheets y Drive
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
 
-    # Prioridad 1: Render (Variable de entorno)
+    # Prioridad 1: Render o Entornos con variables de sistema
     if "GOOGLE_CREDENTIALS" in os.environ:
         creds_info = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
-        creds = Credentials.from_service_account_info(creds_info, scopes=scope)
-        return gspread.authorize(creds)
+        # Usamos service_account_from_dict que es más seguro para evitar wsgiref
+        return gspread.service_account_from_dict(creds_info)
 
-    # Prioridad 2: Celular/PC (Archivo local en assets)
-    rutas_posibles = ["assets/creds.json", "creds.json"]
+    # Prioridad 2: Celular/PC (Archivo local)
+    # Importante: Asegurate de que tu archivo se llame exatamente 'creds.json'
+    rutas_posibles = ["creds.json", "assets/creds.json"]
     for ruta in rutas_posibles:
         if os.path.exists(ruta):
-            creds = Credentials.from_service_account_file(ruta, scopes=scope)
-            return gspread.authorize(creds)
+            # Este es el método que NO usa wsgiref
+            return gspread.service_account(filename=ruta)
 
-    raise FileNotFoundError("No se encontró el archivo creds.json")
+    raise FileNotFoundError("No se encontró el archivo creds.json en el proyecto.")
 
 
 # --- 2. FUNCIONES DE GOOGLE SHEETS ---
@@ -41,6 +40,7 @@ def obtener_o_crear_pestana(spreadsheet, año):
     try:
         return spreadsheet.worksheet(nombre)
     except gspread.exceptions.WorksheetNotFound:
+        # Si no existe, duplica la primera hoja como plantilla
         plantilla = spreadsheet.get_worksheet(0)
         nueva = spreadsheet.duplicate_sheet(plantilla.id, new_sheet_name=nombre)
         nueva.batch_clear(["A3:U100"])
@@ -57,23 +57,13 @@ def aplicar_estilos_y_totales(
         f"J{fila_nueva}:U{fila_nueva}",
         {"numberFormat": formato_plata, "horizontalAlignment": "CENTER"},
     )
-    sheet.format(
-        f"A{fila_nueva}:U{fila_nueva}",
-        {
-            "borders": {
-                "top": {"style": "SOLID"},
-                "bottom": {"style": "SOLID"},
-                "left": {"style": "SOLID"},
-                "right": {"style": "SOLID"},
-            }
-        },
-    )
 
     color = (
         {"red": 0.85, "green": 0.92, "blue": 0.83}
         if responsable == "Ale"
         else {"red": 0.8, "green": 0.88, "blue": 1.0}
     )
+
     sheet.format(
         f"D{fila_nueva}",
         {
@@ -84,6 +74,7 @@ def aplicar_estilos_y_totales(
     )
 
     if ultima_cuota_aca is not None:
+        # Calcula la letra de la columna J=74 en ASCII
         col_letra = chr(74 + ultima_cuota_aca)
         sheet.format(f"{col_letra}{fila_nueva}", {"backgroundColor": color})
 
@@ -95,8 +86,9 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
     client = obtener_cliente()
     ss = client.open("Gastos 2026 - Tarjetas")
 
+    # Limpieza de monto
     monto_f = float(
-        str(monto).replace("$", "").replace(".", "").replace(",", ".").replace(" ", "")
+        str(monto).replace("$", "").replace(".", "").replace(",", ".").strip()
     )
     cant_c = int(cuotas)
     val_c = monto_f / cant_c
@@ -132,9 +124,10 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
                 f_ins = i + 1
                 break
 
+        if f_ins is None:
+            f_ins = len(data) + 1
+
         sheet.insert_row([], f_ins)
-        sheet.merge_cells(f"B{f_ins}:C{f_ins}")
-        sheet.merge_cells(f"D{f_ins}:E{f_ins}")
 
         prefijo = str(año)[2:]
         fila_datos = [
@@ -196,77 +189,17 @@ def main(page: ft.Page):
     page.title = "Tarjetitas"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.window_width = 450
-    page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
-    splash = ft.Column(
-        [
-            ft.Image(src="icon.jpg", width=120, height=120, border_radius=60),
-            ft.Text("Iniciando Tarjetitas...", size=20, weight="bold"),
-            ft.ProgressBar(width=250, color="blue"),
-            ft.Text("Conectando con Google Sheets...", size=12, italic=True),
-        ],
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-    )
-
-    page.add(splash)
-    page.update()
-
-    try:
-        obtener_cliente()
-        time.sleep(1)
-    except Exception as e:
-        page.clean()
-        # CORREGIDO: Se usa ft.Icons (con I mayúscula) para evitar error en Render
-        page.add(ft.Icon(name=ft.Icons.ERROR_OUTLINE, color="red", size=50))
-        page.add(ft.Text(f"Error de inicio: {e}", color="red", text_align="center"))
-        page.update()
-        return
-
-    page.clean()
-    page.vertical_alignment = ft.MainAxisAlignment.START
-
-    tar = ft.Dropdown(
-        label="Tarjeta",
-        value="VISA",
-        options=[ft.dropdown.Option("VISA"), ft.dropdown.Option("MASTERCARD")],
-    )
-    det = ft.TextField(label="Detalle de compra")
-    mon = ft.TextField(label="Monto Total", prefix=ft.Text("$ "), expand=True)
-    cuo = ft.TextField(label="Cuotas", value="1", expand=True)
-    res = ft.Dropdown(
-        label="Responsable",
-        value="Ale",
-        options=[ft.dropdown.Option("Ale"), ft.dropdown.Option("Lu")],
-        expand=True,
-    )
-
-    meses_lista = [
-        "Enero",
-        "Febrero",
-        "Marzo",
-        "Abril",
-        "Mayo",
-        "Junio",
-        "Julio",
-        "Agosto",
-        "Septiembre",
-        "Octubre",
-        "Noviembre",
-        "Diciembre",
-    ]
-
-    mes_actual_idx = datetime.now().month - 1
-
-    mes = ft.Dropdown(
-        label="Mes de Inicio",
-        value=meses_lista[mes_actual_idx],
-        options=[ft.dropdown.Option(m) for m in meses_lista],
-        expand=True,
-    )
-    st = ft.Text("")
+    st = ft.Text("", weight="bold")
 
     def click(e):
+        if not det.value or not mon.value:
+            st.value = "❌ Completá detalle y monto"
+            st.color = "red"
+            page.update()
+            return
+
         st.value = "⏳ Cargando en Google Sheets..."
         st.color = "blue"
         page.update()
@@ -284,23 +217,54 @@ def main(page: ft.Page):
             st.color = "red"
             page.update()
 
+    # Componentes de la UI
+    tar = ft.Dropdown(
+        label="Tarjeta",
+        value="VISA",
+        options=[ft.dropdown.Option("VISA"), ft.dropdown.Option("MASTERCARD")],
+    )
+    det = ft.TextField(label="Detalle de compra")
+    mon = ft.TextField(label="Monto Total", prefix_text="$ ", expand=True)
+    cuo = ft.TextField(label="Cuotas", value="1", expand=True)
+    res = ft.Dropdown(
+        label="Responsable",
+        value="Ale",
+        expand=True,
+        options=[ft.dropdown.Option("Ale"), ft.dropdown.Option("Lu")],
+    )
+
+    meses_lista = [
+        "Enero",
+        "Febrero",
+        "Marzo",
+        "Abril",
+        "Mayo",
+        "Junio",
+        "Julio",
+        "Agosto",
+        "Septiembre",
+        "Octubre",
+        "Noviembre",
+        "Diciembre",
+    ]
+    mes = ft.Dropdown(
+        label="Mes Inicio",
+        value=meses_lista[datetime.now().month - 1],
+        expand=True,
+        options=[ft.dropdown.Option(m) for m in meses_lista],
+    )
+
     page.add(
         ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Tarjetitas", size=30, weight="bold", color="blue700"),
+                    ft.Text("Tarjetita", size=30, weight="bold", color="blue700"),
                     tar,
                     det,
-                    ft.Row([mon, cuo], spacing=10),
-                    ft.Row([res, mes], spacing=10),
+                    ft.Row([mon, cuo]),
+                    ft.Row([res, mes]),
                     ft.ElevatedButton(
-                        "CARGAR GASTO",
-                        on_click=click,
-                        width=400,
-                        height=50,
-                        style=ft.ButtonStyle(
-                            shape=ft.RoundedRectangleBorder(radius=10)
-                        ),
+                        "CARGAR GASTO", on_click=click, width=400, height=50
                     ),
                     st,
                 ],
@@ -309,8 +273,7 @@ def main(page: ft.Page):
             padding=20,
         )
     )
-    page.update()
 
 
 if __name__ == "__main__":
-    ft.app(target=main, assets_dir="assets")
+    ft.app(target=main)
