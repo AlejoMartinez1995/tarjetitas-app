@@ -16,7 +16,6 @@ if "wsgiref" not in sys.modules:
     mock_ss.WSGIRequestHandler = MockHandler
     mock_wsgiref.simple_server = mock_ss
     mock_wsgiref.util = mock_util
-
     sys.modules["wsgiref"] = mock_wsgiref
     sys.modules["wsgiref.simple_server"] = mock_ss
     sys.modules["wsgiref.util"] = mock_util
@@ -32,20 +31,16 @@ def obtener_cliente():
         "assets/creds.json",
         os.path.join(os.getcwd(), "creds.json"),
     ]
-
     for ruta in posibles_rutas:
         if os.path.exists(ruta):
             try:
                 return gspread.service_account(filename=ruta)
             except Exception as e:
                 print(f"Error en {ruta}: {e}")
-
-    raise FileNotFoundError(
-        "No se encontró creds.json. Asegurate de incluirlo en el build."
-    )
+    raise FileNotFoundError("No se encontró creds.json.")
 
 
-# --- 2. FUNCIONES DE GOOGLE SHEETS ---
+# --- 2. FUNCIONES DE GOOGLE SHEETS (ESTILOS Y FORMATO) ---
 
 
 def obtener_o_crear_pestana(spreadsheet, año):
@@ -59,15 +54,74 @@ def obtener_o_crear_pestana(spreadsheet, año):
         return nueva
 
 
+def embellecer_fila(sheet, fila_idx):
+    # Combinar B:C (Detalle) y D:E (Responsable) + Bordes
+    requests = [
+        # Combinar B (1) y C (2)
+        {
+            "mergeCells": {
+                "range": {
+                    "sheetId": sheet.id,
+                    "startRowIndex": fila_idx - 1,
+                    "endRowIndex": fila_idx,
+                    "startColumnIndex": 1,
+                    "endColumnIndex": 3,
+                },
+                "mergeType": "MERGE_ALL",
+            }
+        },
+        # Combinar D (3) y E (4)
+        {
+            "mergeCells": {
+                "range": {
+                    "sheetId": sheet.id,
+                    "startRowIndex": fila_idx - 1,
+                    "endRowIndex": fila_idx,
+                    "startColumnIndex": 3,
+                    "endColumnIndex": 5,
+                },
+                "mergeType": "MERGE_ALL",
+            }
+        },
+        # Bordes para toda la fila
+        {
+            "updateBorders": {
+                "range": {
+                    "sheetId": sheet.id,
+                    "startRowIndex": fila_idx - 1,
+                    "endRowIndex": fila_idx,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 21,
+                },
+                "bottom": {"style": "SOLID", "width": 1},
+                "top": {"style": "SOLID", "width": 1},
+                "left": {"style": "SOLID", "width": 1},
+                "right": {"style": "SOLID", "width": 1},
+                "innerVertical": {"style": "SOLID", "width": 1},
+            }
+        },
+    ]
+    sheet.spreadsheet.batch_update({"requests": requests})
+
+
 def aplicar_estilos_y_totales(sheet, fila_nueva, responsable, ultima_cuota_aca):
     formato_plata = {"type": "CURRENCY", "pattern": '"$" #,##0.00'}
-    sheet.format(f"G{fila_nueva}", {"numberFormat": formato_plata})
-    sheet.format(f"I{fila_nueva}", {"numberFormat": formato_plata})
+
+    # Formatear columnas de dinero
+    sheet.format(
+        f"G{fila_nueva}",
+        {"numberFormat": formato_plata, "horizontalAlignment": "CENTER"},
+    )
+    sheet.format(
+        f"I{fila_nueva}",
+        {"numberFormat": formato_plata, "horizontalAlignment": "CENTER"},
+    )
     sheet.format(
         f"J{fila_nueva}:U{fila_nueva}",
         {"numberFormat": formato_plata, "horizontalAlignment": "CENTER"},
     )
 
+    # Color según responsable
     color = (
         {"red": 0.85, "green": 0.92, "blue": 0.83}
         if responsable == "Ale"
@@ -75,7 +129,7 @@ def aplicar_estilos_y_totales(sheet, fila_nueva, responsable, ultima_cuota_aca):
     )
 
     sheet.format(
-        f"D{fila_nueva}",
+        f"D{fila_nueva}:E{fila_nueva}",
         {
             "backgroundColor": color,
             "textFormat": {"bold": True},
@@ -84,7 +138,7 @@ def aplicar_estilos_y_totales(sheet, fila_nueva, responsable, ultima_cuota_aca):
     )
 
     if ultima_cuota_aca is not None:
-        col_letra = chr(74 + ultima_cuota_aca)
+        col_letra = chr(74 + ultima_cuota_aca)  # 74 es 'J'
         sheet.format(f"{col_letra}{fila_nueva}", {"backgroundColor": color})
 
 
@@ -124,6 +178,7 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
         f_ins = None
         en_bloque = False
 
+        # Buscar dónde insertar (antes del TOTAL del responsable en el bloque de la tarjeta)
         for i, row in enumerate(data):
             f_str = " ".join(row).upper()
             if tarjeta.upper() in f_str and "TOTAL" not in f_str:
@@ -134,15 +189,18 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
 
         if f_ins is None:
             f_ins = len(data) + 1
+
+        # Insertar fila y dar formato
         sheet.insert_row([], f_ins)
+        embellecer_fila(sheet, f_ins)
 
         prefijo = str(año_hoja)[2:]
         fila_datos = [
             datetime.now().strftime("%d/%m/%Y"),
             det_f if año_hoja == 2026 else f"{det_f} (Cont.)",
-            "",
+            "",  # Celda vacía para combinar C con B
             responsable,
-            "",
+            "",  # Celda vacía para combinar E con D
             f"{prefijo}-{mes_inicio[:3].lower()}",
             monto_f,
             cant_c,
@@ -191,34 +249,26 @@ def main(page: ft.Page):
 
     st = ft.Text("Listo para cargar", weight="bold")
 
-    # Definición de inputs con anchos fijos para evitar que se pisen
     tar = ft.Dropdown(
         label="Tarjeta",
         value="VISA",
         options=[ft.dropdown.Option("VISA"), ft.dropdown.Option("MASTERCARD")],
         expand=True,
     )
-
     det = ft.TextField(
         label="Detalle de compra",
         capitalization=ft.TextCapitalization.WORDS,
         expand=True,
     )
-
     mon = ft.TextField(
         label="Monto Total",
         prefix=ft.Text("$ "),
         keyboard_type=ft.KeyboardType.NUMBER,
-        expand=2,  # Le damos más espacio al monto
+        expand=2,
     )
-
     cuo = ft.TextField(
-        label="Cuotas",
-        value="1",
-        keyboard_type=ft.KeyboardType.NUMBER,
-        width=100,  # Ancho fijo para que no se achique
+        label="Cuotas", value="1", keyboard_type=ft.KeyboardType.NUMBER, width=100
     )
-
     res = ft.Dropdown(
         label="Responsable",
         value="Ale",
@@ -253,11 +303,9 @@ def main(page: ft.Page):
             st.color = "red"
             page.update()
             return
-
         st.value = "⏳ Conectando con la planilla..."
         st.color = "blue"
         page.update()
-
         try:
             cargar_gasto(
                 det.value, mon.value, cuo.value, res.value, mes.value, tar.value
@@ -272,15 +320,15 @@ def main(page: ft.Page):
         page.update()
 
     page.add(
-        ft.SafeArea(  # Asegura que no se tape con el notch o la cámara
+        ft.SafeArea(
             ft.Container(
                 content=ft.Column(
                     [
                         ft.Text("Tarjetita", size=32, weight="bold", color="blue700"),
-                        ft.Row([tar]),  # Tarjeta sola arriba
-                        ft.Row([det]),  # Detalle solo
-                        ft.Row([mon, cuo], spacing=10),  # Monto y Cuotas con espacio
-                        ft.Row([res, mes], spacing=10),  # Responsable y Mes
+                        ft.Row([tar]),
+                        ft.Row([det]),
+                        ft.Row([mon, cuo], spacing=10),
+                        ft.Row([res, mes], spacing=10),
                         ft.Divider(height=20, color="transparent"),
                         ft.ElevatedButton(
                             "CARGAR GASTO",
