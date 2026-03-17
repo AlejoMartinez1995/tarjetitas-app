@@ -5,24 +5,34 @@ import sys
 from types import ModuleType
 import gspread
 
-# --- MOCK PARA RENDER (Necesario para entornos como Replit/HuggingFace) ---
+# --- 1. MOCK REFORZADO PARA ANDROID/WEB ---
+# Este bloque engaña a gspread para que no busque la librería 'wsgiref' que falta en el celular.
 if "wsgiref" not in sys.modules:
     mock_wsgiref = ModuleType("wsgiref")
     mock_ss = ModuleType("simple_server")
     mock_util = ModuleType("util")
 
+    # Creamos clases vacías para que no den error al ser llamadas
     class MockHandler:
         pass
 
+    class MockServer:
+        pass
+
     mock_ss.WSGIRequestHandler = MockHandler
-    mock_wsgiref.simple_server = mock_ss
-    mock_wsgiref.util = mock_util
+    mock_ss.make_server = lambda *args, **kwargs: MockServer()
+
+    # Inyectamos los sub-módulos en el sistema
     sys.modules["wsgiref"] = mock_wsgiref
     sys.modules["wsgiref.simple_server"] = mock_ss
     sys.modules["wsgiref.util"] = mock_util
 
+    # Vinculamos los nombres para que gspread los encuentre
+    mock_wsgiref.simple_server = mock_ss
+    mock_wsgiref.util = mock_util
 
-# --- 1. CONEXIÓN ---
+
+# --- 2. CONEXIÓN ---
 def obtener_cliente():
     posibles_rutas = [
         "creds.json",
@@ -38,15 +48,13 @@ def obtener_cliente():
     raise FileNotFoundError("No se encontró creds.json.")
 
 
-# --- 2. LÓGICA DE FORMATO, BORDES Y TOTALES ---
+# --- 3. LÓGICA DE FORMATO Y TOTALES ---
 def formatear_y_totalizar(sheet, tarjeta):
-    """Aplica bordes, colores, combina celdas y calcula totales dinámicos."""
     data = sheet.get_all_values()
     inicio_bloque = None
     fila_total_ale = None
     fila_total_lu = None
 
-    # Localizar filas clave
     for i, row in enumerate(data):
         row_str = " ".join(row).upper()
         if tarjeta.upper() in row_str and "TOTAL" not in row_str:
@@ -61,26 +69,20 @@ def formatear_y_totalizar(sheet, tarjeta):
         return
 
     requests = []
-
-    # 1. Aplicar Formato (Bordes, Colores y Combinaciones) en Batch
     for r in range(inicio_bloque, fila_total_lu + 1):
         idx = r - 1
         row_data = data[idx] if idx < len(data) else []
         responsable = row_data[3] if len(row_data) > 3 else ""
         detalle = row_data[1] if len(row_data) > 1 else ""
 
-        # Lógica de Color de Fondo
-        color = {"red": 1, "green": 1, "blue": 1}  # Blanco
+        color = {"red": 1, "green": 1, "blue": 1}
         if "Ale" in responsable:
-            color = {"red": 0.85, "green": 0.92, "blue": 0.83}  # Verde suave
+            color = {"red": 0.85, "green": 0.92, "blue": 0.83}
         elif "Lu" in responsable:
-            color = {"red": 0.82, "green": 0.88, "blue": 1.0}  # Azul suave
-        elif "TOTAL" in detalle.upper() or (
-            len(row_data) > 0 and "TOTAL" in row_data[0].upper()
-        ):
-            color = {"red": 0.95, "green": 0.95, "blue": 0.95}  # Gris suave
+            color = {"red": 0.82, "green": 0.88, "blue": 1.0}
+        elif "TOTAL" in detalle.upper():
+            color = {"red": 0.95, "green": 0.95, "blue": 0.95}
 
-        # Request de Formato Celda (Fondo y Bordes individuales para evitar error 400)
         requests.append(
             {
                 "repeatCell": {
@@ -107,7 +109,6 @@ def formatear_y_totalizar(sheet, tarjeta):
             }
         )
 
-        # Combinar B:C y D:E solo si NO es una fila de Total
         if "TOTAL" not in detalle.upper():
             for start_col, end_col in [(1, 3), (3, 5)]:
                 requests.append(
@@ -125,30 +126,25 @@ def formatear_y_totalizar(sheet, tarjeta):
                     }
                 )
 
-    # Enviar todos los formatos de una vez para evitar Error 429 (Quota Exceeded)
     if requests:
         sheet.spreadsheet.batch_update({"requests": requests})
 
-    # 2. Fórmulas de Totales Dinámicas
     celdas_formulas = []
     for col_idx in range(10, 22):
         letra = chr(64 + col_idx)
         f_ale = f'=SUMAR.SI($D${inicio_bloque}:$D${fila_total_ale-1}; "Ale"; {letra}${inicio_bloque}:{letra}${fila_total_ale-1})'
         f_lu = f'=SUMAR.SI($D${fila_total_ale+1}:$D${fila_total_lu-1}; "Lu"; {letra}${fila_total_ale+1}:{letra}${fila_total_lu-1})'
-
         celdas_formulas.append(
             {"range": f"{letra}{fila_total_ale}", "values": [[f_ale]]}
         )
         celdas_formulas.append({"range": f"{letra}{fila_total_lu}", "values": [[f_lu]]})
-
     sheet.batch_update(celdas_formulas, value_input_option="USER_ENTERED")
 
 
-# --- 3. PROCESO DE CARGA ---
+# --- 4. PROCESO DE CARGA ---
 def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
     client = obtener_cliente()
     ss = client.open("Gastos 2026 - Tarjetas")
-
     monto_f = float(
         str(monto).replace("$", "").replace(".", "").replace(",", ".").strip()
     )
@@ -175,11 +171,9 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
             sheet = ss.worksheet(f"Gastos {año}")
         except:
             return 0
-
         data = sheet.get_all_values()
         f_ins = None
         en_bloque = False
-
         for i, row in enumerate(data):
             row_str = " ".join(row).upper()
             if tarjeta.upper() in row_str and "TOTAL" not in row_str:
@@ -187,7 +181,6 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
             if en_bloque and f"TOTAL {responsable.upper()}" in row_str:
                 f_ins = i + 1
                 break
-
         if f_ins:
             sheet.insert_row([], f_ins)
             det_final = (
@@ -195,7 +188,6 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
                 if año == 2026
                 else f"{detalle.strip().title()} (Cont.)"
             )
-
             fila = [
                 datetime.now().strftime("%d/%m/%Y"),
                 det_final,
@@ -207,14 +199,12 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
                 cant_c,
                 val_c,
             ]
-
             for i in range(12):
                 if i >= start_idx and cuotas_restantes > 0:
                     fila.append(f"=$I{f_ins}")
                     cuotas_restantes -= 1
                 else:
                     fila.append("")
-
             sheet.update(
                 range_name=f"A{f_ins}", values=[fila], value_input_option="USER_ENTERED"
             )
@@ -227,13 +217,12 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
         procesar_hoja(2027, quedan, 0)
 
 
-# --- 4. INTERFAZ (FLET) ---
+# --- 5. INTERFAZ ---
 def main(page: ft.Page):
     page.title = "Tarjetita 2.0"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.window_width = 450
     page.scroll = ft.ScrollMode.ADAPTIVE
-
     st = ft.Text("Listo para cargar", weight="bold")
     tar = ft.Dropdown(
         label="Tarjeta",
@@ -241,9 +230,16 @@ def main(page: ft.Page):
         options=[ft.dropdown.Option("VISA"), ft.dropdown.Option("MASTERCARD")],
         expand=True,
     )
-    det = ft.TextField(label="Detalle de compra", expand=True)
+    det = ft.TextField(
+        label="Detalle de compra",
+        expand=True,
+        text_capitalization=ft.TextCapitalization.SENTENCES,
+    )
     mon = ft.TextField(
-        label="Monto Total", keyboard_type=ft.KeyboardType.NUMBER, expand=2
+        label="Monto Total",
+        keyboard_type=ft.KeyboardType.NUMBER,
+        expand=2,
+        prefix_text="$",
     )
     cuo = ft.TextField(
         label="Cuotas", value="1", keyboard_type=ft.KeyboardType.NUMBER, width=80
@@ -254,7 +250,6 @@ def main(page: ft.Page):
         options=[ft.dropdown.Option("Ale"), ft.dropdown.Option("Lu")],
         expand=1,
     )
-
     meses_l = [
         "Enero",
         "Febrero",
@@ -286,7 +281,7 @@ def main(page: ft.Page):
             cargar_gasto(
                 det.value, mon.value, cuo.value, res.value, mes.value, tar.value
             )
-            st.value = "✅ ¡Cargado y Formateado!"
+            st.value = "✅ ¡Cargado!"
             st.color = "green"
             det.value = ""
             mon.value = ""
