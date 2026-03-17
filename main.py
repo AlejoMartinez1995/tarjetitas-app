@@ -3,8 +3,9 @@ from datetime import datetime
 import os
 import sys
 from types import ModuleType
+import gspread
 
-# --- MOCK PARA RENDER ---
+# --- MOCK PARA RENDER (Necesario para entornos como Replit/HuggingFace) ---
 if "wsgiref" not in sys.modules:
     mock_wsgiref = ModuleType("wsgiref")
     mock_ss = ModuleType("simple_server")
@@ -19,8 +20,6 @@ if "wsgiref" not in sys.modules:
     sys.modules["wsgiref"] = mock_wsgiref
     sys.modules["wsgiref.simple_server"] = mock_ss
     sys.modules["wsgiref.util"] = mock_util
-
-import gspread
 
 
 # --- 1. CONEXIÓN ---
@@ -41,7 +40,7 @@ def obtener_cliente():
 
 # --- 2. LÓGICA DE FORMATO, BORDES Y TOTALES ---
 def formatear_y_totalizar(sheet, tarjeta):
-    """Aplica bordes, combina celdas y calcula totales dinámicos por bloque."""
+    """Aplica bordes, colores, combina celdas y calcula totales dinámicos."""
     data = sheet.get_all_values()
     inicio_bloque = None
     fila_total_ale = None
@@ -51,7 +50,7 @@ def formatear_y_totalizar(sheet, tarjeta):
     for i, row in enumerate(data):
         row_str = " ".join(row).upper()
         if tarjeta.upper() in row_str and "TOTAL" not in row_str:
-            inicio_bloque = i + 2  # La primera fila de datos después del encabezado
+            inicio_bloque = i + 2
         if inicio_bloque and "TOTAL ALE" in row_str:
             fila_total_ale = i + 1
         if inicio_bloque and "TOTAL LU" in row_str:
@@ -62,73 +61,88 @@ def formatear_y_totalizar(sheet, tarjeta):
         return
 
     requests = []
-    # 1. Bordes y Combinación (B:C y D:E)
+
+    # 1. Aplicar Formato (Bordes, Colores y Combinaciones) en Batch
     for r in range(inicio_bloque, fila_total_lu + 1):
         idx = r - 1
-        # Bordes para toda la fila (A hasta U)
+        row_data = data[idx] if idx < len(data) else []
+        responsable = row_data[3] if len(row_data) > 3 else ""
+        detalle = row_data[1] if len(row_data) > 1 else ""
+
+        # Lógica de Color de Fondo
+        color = {"red": 1, "green": 1, "blue": 1}  # Blanco
+        if "Ale" in responsable:
+            color = {"red": 0.85, "green": 0.92, "blue": 0.83}  # Verde suave
+        elif "Lu" in responsable:
+            color = {"red": 0.82, "green": 0.88, "blue": 1.0}  # Azul suave
+        elif "TOTAL" in detalle.upper() or "TOTAL" in row_data[0].upper():
+            color = {"red": 0.95, "green": 0.95, "blue": 0.95}  # Gris suave
+
+        # Request de Formato Celda (Fondo y Bordes)
         requests.append(
             {
-                "updateBorders": {
+                "repeatCell": {
                     "range": {
                         "sheetId": sheet.id,
                         "startRowIndex": idx,
                         "endRowIndex": r,
                         "startColumnIndex": 0,
-                        "endColumnIndex": 21,
+                        "endColumnIndex": 22,
                     },
-                    "top": {"style": "SOLID"},
-                    "bottom": {"style": "SOLID"},
-                    "left": {"style": "SOLID"},
-                    "right": {"style": "SOLID"},
-                    "innerHorizontal": {"style": "SOLID"},
-                    "innerVertical": {"style": "SOLID"},
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": color,
+                            "borders": {
+                                "top": {"style": "SOLID"},
+                                "bottom": {"style": "SOLID"},
+                                "left": {"style": "SOLID"},
+                                "right": {"style": "SOLID"},
+                                "innerHorizontal": {"style": "SOLID"},
+                                "innerVertical": {"style": "SOLID"},
+                            },
+                        }
+                    },
+                    "fields": "userEnteredFormat(backgroundColor,borders)",
                 }
             }
         )
-        # Combinar B:C y D:E solo en filas que no son de "Total"
-        if r < fila_total_ale or (r > fila_total_ale and r < fila_total_lu):
-            requests.append(
-                {
-                    "mergeCells": {
-                        "range": {
-                            "sheetId": sheet.id,
-                            "startRowIndex": idx,
-                            "endRowIndex": r,
-                            "startColumnIndex": 1,
-                            "endColumnIndex": 3,
-                        },
-                        "mergeType": "MERGE_ALL",
-                    }
-                }
-            )
-            requests.append(
-                {
-                    "mergeCells": {
-                        "range": {
-                            "sheetId": sheet.id,
-                            "startRowIndex": idx,
-                            "endRowIndex": r,
-                            "startColumnIndex": 3,
-                            "endColumnIndex": 5,
-                        },
-                        "mergeType": "MERGE_ALL",
-                    }
-                }
-            )
 
+        # Combinar B:C y D:E solo si NO es una fila de Total
+        if "TOTAL" not in detalle.upper():
+            for start_col, end_col in [(1, 3), (3, 5)]:
+                requests.append(
+                    {
+                        "mergeCells": {
+                            "range": {
+                                "sheetId": sheet.id,
+                                "startRowIndex": idx,
+                                "endRowIndex": r,
+                                "startColumnIndex": start_col,
+                                "endColumnIndex": end_col,
+                            },
+                            "mergeType": "MERGE_ALL",
+                        }
+                    }
+                )
+
+    # Enviar todos los formatos de una vez
     if requests:
         sheet.spreadsheet.batch_update({"requests": requests})
 
-    # 2. Fórmulas de Totales Dinámicas
-    # Total Ale: suma desde inicio_bloque hasta fila_total_ale - 1
-    # Total Lu: suma desde fila_total_ale + 1 hasta fila_total_lu - 1
-    for col_idx in range(10, 22):  # Columnas J a U
+    # 2. Fórmulas de Totales Dinámicas (Columnas K a V -> Index 10 a 21)
+    celdas_formulas = []
+    for col_idx in range(10, 22):
         letra = chr(64 + col_idx)
+        # Suma condicional según responsable en su sección correspondiente
         f_ale = f'=SUMAR.SI($D${inicio_bloque}:$D${fila_total_ale-1}; "Ale"; {letra}${inicio_bloque}:{letra}${fila_total_ale-1})'
         f_lu = f'=SUMAR.SI($D${fila_total_ale+1}:$D${fila_total_lu-1}; "Lu"; {letra}${fila_total_ale+1}:{letra}${fila_total_lu-1})'
 
-        sheet.update_acell(f"{letra}{fila_total_ale}", f_ale)
-        sheet.update_acell(f"{letra}{fila_total_lu}", f_lu)
+        celdas_formulas.append(
+            {"range": f"{letra}{fila_total_ale}", "values": [[f_ale]]}
+        )
+        celdas_formulas.append({"range": f"{letra}{fila_total_lu}", "values": [[f_lu]]})
+
+    sheet.batch_update(celdas_formulas, value_input_option="USER_ENTERED")
 
 
 # --- 3. PROCESO DE CARGA ---
@@ -157,7 +171,7 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
     ]
     idx_m = meses.index(mes_inicio)
 
-    def procesar_hoja(año, cuotas_a_cargar, start_idx):
+    def procesar_hoja(año, cuotas_restantes, start_idx):
         try:
             sheet = ss.worksheet(f"Gastos {año}")
         except:
@@ -166,6 +180,8 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
         data = sheet.get_all_values()
         f_ins = None
         en_bloque = False
+
+        # Buscar la fila de inserción (justo antes del TOTAL del responsable)
         for i, row in enumerate(data):
             row_str = " ".join(row).upper()
             if tarjeta.upper() in row_str and "TOTAL" not in row_str:
@@ -181,24 +197,27 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
                 if año == 2026
                 else f"{detalle.strip().title()} (Cont.)"
             )
+
+            # Construir Fila
             fila = [
-                datetime.now().strftime("%d/%m/%Y"),
-                det_final,
-                "",
-                responsable,
-                "",
-                f"{str(año)[2:]}-{meses[start_idx][:3].lower()}",
-                monto_f,
-                cant_c,
-                val_c,
+                datetime.now().strftime("%d/%m/%Y"),  # A
+                det_final,  # B
+                "",  # C
+                responsable,  # D
+                "",  # E
+                f"{str(año)[2:]}-{meses[start_idx][:3].lower()}",  # F
+                monto_f,  # G
+                cant_c,  # H
+                val_c,  # I
             ]
 
-            cargas_realizadas = 0
+            # Llenar meses (Columnas J en adelante)
+            cargas_hechas = 0
             for i in range(12):
-                if i >= start_idx and cuotas_a_cargar > 0:
+                if i >= start_idx and cuotas_restantes > 0:
                     fila.append(f"=$I{f_ins}")
-                    cuotas_a_cargar -= 1
-                    cargas_realizadas += 1
+                    cuotas_restantes -= 1
+                    cargas_hechas += 1
                 else:
                     fila.append("")
 
@@ -206,22 +225,23 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
                 range_name=f"A{f_ins}", values=[fila], value_input_option="USER_ENTERED"
             )
             formatear_y_totalizar(sheet, tarjeta)
-            return cuotas_a_cargar
+            return cuotas_restantes
+        return cuotas_restantes
 
-    # Cargar en 2026 y si sobran cuotas, en 2027
+    # Ejecución
     quedan = procesar_hoja(2026, cant_c, idx_m)
     if quedan > 0:
         procesar_hoja(2027, quedan, 0)
 
 
-# --- 4. INTERFAZ ---
+# --- 4. INTERFAZ (FLET) ---
 def main(page: ft.Page):
-    page.title = "Tarjetita"
+    page.title = "Tarjetita 2.0"
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
+    page.window_width = 400
     page.scroll = ft.ScrollMode.ADAPTIVE
-    st = ft.Text("Listo para cargar", weight="bold")
 
+    st = ft.Text("Listo para cargar", weight="bold")
     tar = ft.Dropdown(
         label="Tarjeta",
         value="VISA",
@@ -233,7 +253,7 @@ def main(page: ft.Page):
         label="Monto Total", keyboard_type=ft.KeyboardType.NUMBER, expand=2
     )
     cuo = ft.TextField(
-        label="Cuotas", value="1", keyboard_type=ft.KeyboardType.NUMBER, width=100
+        label="Cuotas", value="1", keyboard_type=ft.KeyboardType.NUMBER, width=80
     )
     res = ft.Dropdown(
         label="Responsable",
@@ -241,7 +261,8 @@ def main(page: ft.Page):
         options=[ft.dropdown.Option("Ale"), ft.dropdown.Option("Lu")],
         expand=1,
     )
-    meses_lista = [
+
+    meses_l = [
         "Enero",
         "Febrero",
         "Marzo",
@@ -257,50 +278,48 @@ def main(page: ft.Page):
     ]
     mes = ft.Dropdown(
         label="Mes Inicio",
-        value=meses_lista[datetime.now().month - 1],
-        options=[ft.dropdown.Option(m) for m in meses_lista],
+        value=meses_l[datetime.now().month - 1],
+        options=[ft.dropdown.Option(m) for m in meses_l],
         expand=2,
     )
 
     def click(e):
         if not det.value or not mon.value:
             return
-        st.value = "⏳ Procesando bloques y celdas..."
+        st.value = "⏳ Procesando... No cierres la app"
         st.color = "blue"
         page.update()
         try:
             cargar_gasto(
                 det.value, mon.value, cuo.value, res.value, mes.value, tar.value
             )
-            st.value = "✅ ¡Carga y formato completados!"
+            st.value = "✅ ¡Cargado y Formateado!"
             st.color = "green"
             det.value = ""
             mon.value = ""
+            page.update()
         except Exception as ex:
             st.value = f"❌ Error: {str(ex)}"
             st.color = "red"
-        page.update()
+            page.update()
 
     page.add(
-        ft.SafeArea(
-            ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Text("Tarjetita", size=32, weight="bold", color="blue700"),
-                        ft.Row([tar]),
-                        ft.Row([det]),
-                        ft.Row([mon, cuo]),
-                        ft.Row([res, mes]),
-                        ft.ElevatedButton(
-                            "CARGAR GASTO", on_click=click, width=page.width, height=60
-                        ),
-                        st,
-                    ],
-                    spacing=15,
-                    horizontal_alignment="center",
-                ),
-                padding=10,
-            )
+        ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text("Tarjetita", size=32, weight="bold", color="blue700"),
+                    ft.Row([tar]),
+                    ft.Row([det]),
+                    ft.Row([mon, cuo]),
+                    ft.Row([res, mes]),
+                    ft.ElevatedButton(
+                        "CARGAR GASTO", on_click=click, width=page.width, height=50
+                    ),
+                    st,
+                ],
+                spacing=15,
+            ),
+            padding=20,
         )
     )
 
