@@ -198,7 +198,8 @@ def main(page: ft.Page):
         options=[ft.dropdown.Option("VISA"), ft.dropdown.Option("MASTERCARD")],
     )
     det = ft.TextField(
-        label="Detalle de compra", text_capitalize=ft.TextCapitalization.WORDS
+        label="Detalle de compra",
+        capitalization=ft.TextCapitalization.WORDS,  # <--- 'capitalization' es el nombre nuevo
     )
     mon = ft.TextField(
         label="Monto Total", prefix_text="$ ", keyboard_type=ft.KeyboardType.NUMBER
