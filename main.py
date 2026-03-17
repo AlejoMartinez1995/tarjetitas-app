@@ -75,10 +75,12 @@ def formatear_y_totalizar(sheet, tarjeta):
             color = {"red": 0.85, "green": 0.92, "blue": 0.83}  # Verde suave
         elif "Lu" in responsable:
             color = {"red": 0.82, "green": 0.88, "blue": 1.0}  # Azul suave
-        elif "TOTAL" in detalle.upper() or "TOTAL" in row_data[0].upper():
+        elif "TOTAL" in detalle.upper() or (
+            len(row_data) > 0 and "TOTAL" in row_data[0].upper()
+        ):
             color = {"red": 0.95, "green": 0.95, "blue": 0.95}  # Gris suave
 
-        # Request de Formato Celda (Fondo y Bordes)
+        # Request de Formato Celda (Fondo y Bordes individuales para evitar error 400)
         requests.append(
             {
                 "repeatCell": {
@@ -87,7 +89,7 @@ def formatear_y_totalizar(sheet, tarjeta):
                         "startRowIndex": idx,
                         "endRowIndex": r,
                         "startColumnIndex": 0,
-                        "endColumnIndex": 22,
+                        "endColumnIndex": 21,
                     },
                     "cell": {
                         "userEnteredFormat": {
@@ -97,8 +99,6 @@ def formatear_y_totalizar(sheet, tarjeta):
                                 "bottom": {"style": "SOLID"},
                                 "left": {"style": "SOLID"},
                                 "right": {"style": "SOLID"},
-                                "innerHorizontal": {"style": "SOLID"},
-                                "innerVertical": {"style": "SOLID"},
                             },
                         }
                     },
@@ -125,15 +125,14 @@ def formatear_y_totalizar(sheet, tarjeta):
                     }
                 )
 
-    # Enviar todos los formatos de una vez
+    # Enviar todos los formatos de una vez para evitar Error 429 (Quota Exceeded)
     if requests:
         sheet.spreadsheet.batch_update({"requests": requests})
 
-    # 2. Fórmulas de Totales Dinámicas (Columnas K a V -> Index 10 a 21)
+    # 2. Fórmulas de Totales Dinámicas
     celdas_formulas = []
     for col_idx in range(10, 22):
         letra = chr(64 + col_idx)
-        # Suma condicional según responsable en su sección correspondiente
         f_ale = f'=SUMAR.SI($D${inicio_bloque}:$D${fila_total_ale-1}; "Ale"; {letra}${inicio_bloque}:{letra}${fila_total_ale-1})'
         f_lu = f'=SUMAR.SI($D${fila_total_ale+1}:$D${fila_total_lu-1}; "Lu"; {letra}${fila_total_ale+1}:{letra}${fila_total_lu-1})'
 
@@ -181,7 +180,6 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
         f_ins = None
         en_bloque = False
 
-        # Buscar la fila de inserción (justo antes del TOTAL del responsable)
         for i, row in enumerate(data):
             row_str = " ".join(row).upper()
             if tarjeta.upper() in row_str and "TOTAL" not in row_str:
@@ -198,26 +196,22 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
                 else f"{detalle.strip().title()} (Cont.)"
             )
 
-            # Construir Fila
             fila = [
-                datetime.now().strftime("%d/%m/%Y"),  # A
-                det_final,  # B
-                "",  # C
-                responsable,  # D
-                "",  # E
-                f"{str(año)[2:]}-{meses[start_idx][:3].lower()}",  # F
-                monto_f,  # G
-                cant_c,  # H
-                val_c,  # I
+                datetime.now().strftime("%d/%m/%Y"),
+                det_final,
+                "",
+                responsable,
+                "",
+                f"{str(año)[2:]}-{meses[start_idx][:3].lower()}",
+                monto_f,
+                cant_c,
+                val_c,
             ]
 
-            # Llenar meses (Columnas J en adelante)
-            cargas_hechas = 0
             for i in range(12):
                 if i >= start_idx and cuotas_restantes > 0:
                     fila.append(f"=$I{f_ins}")
                     cuotas_restantes -= 1
-                    cargas_hechas += 1
                 else:
                     fila.append("")
 
@@ -228,7 +222,6 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
             return cuotas_restantes
         return cuotas_restantes
 
-    # Ejecución
     quedan = procesar_hoja(2026, cant_c, idx_m)
     if quedan > 0:
         procesar_hoja(2027, quedan, 0)
@@ -238,7 +231,7 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
 def main(page: ft.Page):
     page.title = "Tarjetita 2.0"
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.window_width = 400
+    page.window_width = 450
     page.scroll = ft.ScrollMode.ADAPTIVE
 
     st = ft.Text("Listo para cargar", weight="bold")
