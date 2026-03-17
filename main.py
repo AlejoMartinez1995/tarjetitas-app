@@ -4,14 +4,28 @@ import os
 import sys
 from types import ModuleType
 
-# --- TRUCO DEFINITIVO ---
+# --- TRUCO NIVEL DIOS: Mock completo para engañar a la herencia de clases ---
 if "wsgiref" not in sys.modules:
+    # Creamos la estructura de carpetas falsa
     mock_wsgiref = ModuleType("wsgiref")
-    mock_wsgiref.simple_server = ModuleType("simple_server")
-    mock_wsgiref.util = ModuleType("util")  # Esta es la que te pedía el último error
+    mock_ss = ModuleType("simple_server")
+    mock_util = ModuleType("util")
+    
+    # Creamos una clase vacía para que la herencia no explote
+    class MockHandler: 
+        pass
+
+    # Metemos la clase adentro del simple_server falso
+    mock_ss.WSGIRequestHandler = MockHandler
+    
+    # Conectamos todo
+    mock_wsgiref.simple_server = mock_ss
+    mock_wsgiref.util = mock_util
+    
+    # Registramos en el sistema
     sys.modules["wsgiref"] = mock_wsgiref
-    sys.modules["wsgiref.simple_server"] = mock_wsgiref.simple_server
-    sys.modules["wsgiref.util"] = mock_wsgiref.util
+    sys.modules["wsgiref.simple_server"] = mock_ss
+    sys.modules["wsgiref.util"] = mock_util
 
 import gspread
 
