@@ -187,28 +187,43 @@ def main(page: ft.Page):
     page.theme_mode = ft.ThemeMode.LIGHT
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.scroll = ft.ScrollMode.ADAPTIVE
+    page.padding = 20
 
     st = ft.Text("Listo para cargar", weight="bold")
 
+    # Definición de inputs con anchos fijos para evitar que se pisen
     tar = ft.Dropdown(
         label="Tarjeta",
         value="VISA",
         options=[ft.dropdown.Option("VISA"), ft.dropdown.Option("MASTERCARD")],
+        expand=True,
     )
+
     det = ft.TextField(
         label="Detalle de compra",
         capitalization=ft.TextCapitalization.WORDS,
+        expand=True,
     )
+
     mon = ft.TextField(
         label="Monto Total",
-        prefix=ft.Text("$ "),  # <--- Corregido: Ahora usa 'prefix' y el control ft.Text
+        prefix=ft.Text("$ "),
         keyboard_type=ft.KeyboardType.NUMBER,
+        expand=2,  # Le damos más espacio al monto
     )
-    cuo = ft.TextField(label="Cuotas", value="1", keyboard_type=ft.KeyboardType.NUMBER)
+
+    cuo = ft.TextField(
+        label="Cuotas",
+        value="1",
+        keyboard_type=ft.KeyboardType.NUMBER,
+        width=100,  # Ancho fijo para que no se achique
+    )
+
     res = ft.Dropdown(
         label="Responsable",
         value="Ale",
         options=[ft.dropdown.Option("Ale"), ft.dropdown.Option("Lu")],
+        expand=1,
     )
 
     meses_lista = [
@@ -229,6 +244,7 @@ def main(page: ft.Page):
         label="Mes Inicio",
         value=meses_lista[datetime.now().month - 1],
         options=[ft.dropdown.Option(m) for m in meses_lista],
+        expand=2,
     )
 
     def click(e):
@@ -256,23 +272,32 @@ def main(page: ft.Page):
         page.update()
 
     page.add(
-        ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text("Tarjetita", size=32, weight="bold", color="blue700"),
-                    tar,
-                    det,
-                    ft.Row([mon, cuo], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    ft.Row([res, mes], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    ft.ElevatedButton(
-                        "CARGAR GASTO", on_click=click, width=400, height=60
-                    ),
-                    st,
-                ],
-                spacing=20,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=30,
+        ft.SafeArea(  # Asegura que no se tape con el notch o la cámara
+            ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text("Tarjetita", size=32, weight="bold", color="blue700"),
+                        ft.Row([tar]),  # Tarjeta sola arriba
+                        ft.Row([det]),  # Detalle solo
+                        ft.Row([mon, cuo], spacing=10),  # Monto y Cuotas con espacio
+                        ft.Row([res, mes], spacing=10),  # Responsable y Mes
+                        ft.Divider(height=20, color="transparent"),
+                        ft.ElevatedButton(
+                            "CARGAR GASTO",
+                            on_click=click,
+                            width=page.width,
+                            height=60,
+                            style=ft.ButtonStyle(
+                                shape=ft.RoundedRectangleBorder(radius=10)
+                            ),
+                        ),
+                        st,
+                    ],
+                    spacing=15,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=10,
+            )
         )
     )
 
