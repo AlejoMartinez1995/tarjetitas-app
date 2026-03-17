@@ -2,29 +2,45 @@ import flet as ft
 from datetime import datetime
 import os
 import json
-import time
+import sys
+
+# --- TRUCO PARA ANDROID: Evitar error de wsgiref ---
+# Creamos un módulo falso en memoria para que gspread no falle al importar
+from types import ModuleType
+
+if "wsgiref" not in sys.modules:
+    mock_wsgiref = ModuleType("wsgiref")
+    mock_wsgiref.simple_server = ModuleType("simple_server")
+    sys.modules["wsgiref"] = mock_wsgiref
+    sys.modules["wsgiref.simple_server"] = mock_wsgiref.simple_server
+
+import gspread
+
+# --------------------------------------------------
 
 # --- 1. CONFIGURACIÓN DE CONEXIÓN ---
 
 
-import gspread
-from gspread import service_account # Importación directa para evitar ruido
-
 def obtener_cliente():
-    # En Android, el archivo suele quedar en la raíz de la app
-    ruta_creds = "creds.json" 
-    
+    # En Flet para Android, los archivos en 'assets' se acceden directamente
+    # si están en la misma carpeta que el main.py durante el build.
+    # Intentamos primero en la raíz (donde suele quedar en el APK)
+    ruta_creds = "assets/creds.json"
+
     if os.path.exists(ruta_creds):
-        # Usamos la función importada directamente
-        return service_account(filename=ruta_creds)
-    
-    # Si falla, buscamos en variables (como tenías para Render)
+        return gspread.service_account(filename=ruta_creds)
+
+    # Si falla, buscamos en la carpeta assets por si acaso
+    ruta_assets = os.path.join(os.getcwd(), "assets", "creds.json")
+    if os.path.exists(ruta_assets):
+        return gspread.service_account(filename=ruta_assets)
+
+    # Si usás variables de entorno (como en Render)
     if "GOOGLE_CREDENTIALS" in os.environ:
-        import json
         creds_info = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
         return gspread.service_account_from_dict(creds_info)
 
-    raise FileNotFoundError("No se encontró creds.json")
+    raise FileNotFoundError(f"No se encontró creds.json en {os.getcwd()}")
 
 
 # --- 2. FUNCIONES DE GOOGLE SHEETS ---
@@ -35,7 +51,6 @@ def obtener_o_crear_pestana(spreadsheet, año):
     try:
         return spreadsheet.worksheet(nombre)
     except gspread.exceptions.WorksheetNotFound:
-        # Si no existe, duplica la primera hoja como plantilla
         plantilla = spreadsheet.get_worksheet(0)
         nueva = spreadsheet.duplicate_sheet(plantilla.id, new_sheet_name=nombre)
         nueva.batch_clear(["A3:U100"])
@@ -69,7 +84,6 @@ def aplicar_estilos_y_totales(
     )
 
     if ultima_cuota_aca is not None:
-        # Calcula la letra de la columna J=74 en ASCII
         col_letra = chr(74 + ultima_cuota_aca)
         sheet.format(f"{col_letra}{fila_nueva}", {"backgroundColor": color})
 
@@ -81,7 +95,6 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
     client = obtener_cliente()
     ss = client.open("Gastos 2026 - Tarjetas")
 
-    # Limpieza de monto
     monto_f = float(
         str(monto).replace("$", "").replace(".", "").replace(",", ".").strip()
     )
@@ -181,7 +194,7 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
 
 
 def main(page: ft.Page):
-    page.title = "Tarjetitas"
+    page.title = "Tarjetita"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.window_width = 450
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
@@ -212,7 +225,6 @@ def main(page: ft.Page):
             st.color = "red"
             page.update()
 
-    # Componentes de la UI
     tar = ft.Dropdown(
         label="Tarjeta",
         value="VISA",
