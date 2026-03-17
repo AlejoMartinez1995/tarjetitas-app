@@ -4,7 +4,8 @@ import os
 import sys
 from types import ModuleType
 
-# --- 1. MOCK REFORZADO PARA ANDROID (Soluciona ModuleNotFoundError: 'wsgiref') ---
+# --- 1. MOCK REFORZADO PARA ANDROID ---
+# Este bloque evita el error 'wsgiref' en dispositivos móviles
 if "wsgiref" not in sys.modules:
     mock_wsgiref = ModuleType("wsgiref")
     mock_ss = ModuleType("simple_server")
@@ -18,11 +19,9 @@ if "wsgiref" not in sys.modules:
 
     mock_ss.WSGIRequestHandler = MockHandler
     mock_ss.make_server = lambda *args, **kwargs: MockServer()
-
     sys.modules["wsgiref"] = mock_wsgiref
     sys.modules["wsgiref.simple_server"] = mock_ss
     sys.modules["wsgiref.util"] = mock_util
-
     mock_wsgiref.simple_server = mock_ss
     mock_wsgiref.util = mock_util
 
@@ -45,7 +44,7 @@ def obtener_cliente():
     raise FileNotFoundError("No se encontró creds.json.")
 
 
-# --- 3. LÓGICA DE FORMATO, BORDES Y TOTALES (Batch para evitar Error 429) ---
+# --- 3. LÓGICA DE FORMATO Y TOTALES (BATCH) ---
 def formatear_y_totalizar(sheet, tarjeta):
     data = sheet.get_all_values()
     inicio_bloque = None
@@ -66,7 +65,8 @@ def formatear_y_totalizar(sheet, tarjeta):
         return
 
     requests = []
-    # Formato de moneda y alineación para las columnas de meses (J a U)
+
+    # Formato de moneda para columnas de meses (J a U)
     requests.append(
         {
             "repeatCell": {
@@ -94,18 +94,15 @@ def formatear_y_totalizar(sheet, tarjeta):
         responsable = row_data[3] if len(row_data) > 3 else ""
         detalle = row_data[1] if len(row_data) > 1 else ""
 
-        # Colores según responsable
+        # Lógica de colores según responsable
         color = {"red": 1, "green": 1, "blue": 1}
         if "Ale" in responsable:
             color = {"red": 0.85, "green": 0.92, "blue": 0.83}
         elif "Lu" in responsable:
-            color = {"red": 0.82, "green": 0.88, "blue": 1.0}
-        elif "TOTAL" in detalle.upper() or (
-            len(row_data) > 0 and "TOTAL" in row_data[0].upper()
-        ):
+            color = {"red": 0.8, "green": 0.88, "blue": 1.0}
+        elif "TOTAL" in detalle.upper():
             color = {"red": 0.95, "green": 0.95, "blue": 0.95}
 
-        # Bordes compatibles con API (sin innerHorizontal)
         requests.append(
             {
                 "repeatCell": {
@@ -152,7 +149,7 @@ def formatear_y_totalizar(sheet, tarjeta):
     if requests:
         sheet.spreadsheet.batch_update({"requests": requests})
 
-    # Fórmulas de Totales
+    # Fórmulas de Totales Dinámicas
     celdas_formulas = []
     for col_idx in range(10, 22):
         letra = chr(64 + col_idx)
@@ -245,7 +242,6 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
 def main(page: ft.Page):
     page.title = "Tarjetita 2.0"
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.window_width = 450
     page.scroll = ft.ScrollMode.ADAPTIVE
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
@@ -276,7 +272,6 @@ def main(page: ft.Page):
         options=[ft.dropdown.Option("Ale"), ft.dropdown.Option("Lu")],
         width=190,
     )
-
     meses_l = [
         "Enero",
         "Febrero",
@@ -304,14 +299,14 @@ def main(page: ft.Page):
             st.color = "red"
             page.update()
             return
-        st.value = "⏳ Procesando..."
+        st.value = "⏳ Conectando con Google..."
         st.color = "blue"
         page.update()
         try:
             cargar_gasto(
                 det.value, mon.value, cuo.value, res.value, mes.value, tar.value
             )
-            st.value = "✅ ¡Gasto cargado!"
+            st.value = "✅ ¡Cargado y Formateado!"
             st.color = "green"
             det.value = ""
             mon.value = ""
@@ -339,7 +334,7 @@ def main(page: ft.Page):
                     ),
                     st,
                 ],
-                spacing=20,
+                spacing=15,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             padding=20,
