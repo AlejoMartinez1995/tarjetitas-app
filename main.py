@@ -4,7 +4,7 @@ import os
 import sys
 from types import ModuleType
 
-# --- TRUCO NIVEL DIOS: Mock completo para engañar a la herencia de clases ---
+# --- MOCK PARA RENDER ---
 if "wsgiref" not in sys.modules:
     mock_wsgiref = ModuleType("wsgiref")
     mock_ss = ModuleType("simple_server")
@@ -22,9 +22,8 @@ if "wsgiref" not in sys.modules:
 
 import gspread
 
+
 # --- 1. CONFIGURACIÓN DE CONEXIÓN ---
-
-
 def obtener_cliente():
     posibles_rutas = [
         "creds.json",
@@ -41,8 +40,6 @@ def obtener_cliente():
 
 
 # --- 2. FUNCIONES DE GOOGLE SHEETS (ESTILOS Y FORMATO) ---
-
-
 def obtener_o_crear_pestana(spreadsheet, año):
     nombre = f"Gastos {año}"
     try:
@@ -55,9 +52,7 @@ def obtener_o_crear_pestana(spreadsheet, año):
 
 
 def embellecer_fila(sheet, fila_idx):
-    # Combinar B:C (Detalle) y D:E (Responsable) + Bordes
     requests = [
-        # Combinar B (1) y C (2)
         {
             "mergeCells": {
                 "range": {
@@ -70,7 +65,6 @@ def embellecer_fila(sheet, fila_idx):
                 "mergeType": "MERGE_ALL",
             }
         },
-        # Combinar D (3) y E (4)
         {
             "mergeCells": {
                 "range": {
@@ -83,7 +77,6 @@ def embellecer_fila(sheet, fila_idx):
                 "mergeType": "MERGE_ALL",
             }
         },
-        # Bordes para toda la fila
         {
             "updateBorders": {
                 "range": {
@@ -104,30 +97,23 @@ def embellecer_fila(sheet, fila_idx):
     sheet.spreadsheet.batch_update({"requests": requests})
 
 
-def aplicar_estilos_y_totales(sheet, fila_nueva, responsable, ultima_cuota_aca):
+def aplicar_estilos_y_totales(sheet, fila_nueva, responsable, tarjeta):
     formato_plata = {"type": "CURRENCY", "pattern": '"$" #,##0.00'}
 
-    # Formatear columnas de dinero
+    # 1. Formatear TODAS las columnas de dinero (G, I y de J a U)
     sheet.format(
-        f"G{fila_nueva}",
-        {"numberFormat": formato_plata, "horizontalAlignment": "CENTER"},
+        f"G3:G150", {"numberFormat": formato_plata, "horizontalAlignment": "CENTER"}
     )
     sheet.format(
-        f"I{fila_nueva}",
-        {"numberFormat": formato_plata, "horizontalAlignment": "CENTER"},
-    )
-    sheet.format(
-        f"J{fila_nueva}:U{fila_nueva}",
-        {"numberFormat": formato_plata, "horizontalAlignment": "CENTER"},
+        f"I3:U150", {"numberFormat": formato_plata, "horizontalAlignment": "CENTER"}
     )
 
-    # Color según responsable
+    # 2. Color del responsable en la fila nueva
     color = (
         {"red": 0.85, "green": 0.92, "blue": 0.83}
         if responsable == "Ale"
         else {"red": 0.8, "green": 0.88, "blue": 1.0}
     )
-
     sheet.format(
         f"D{fila_nueva}:E{fila_nueva}",
         {
@@ -137,25 +123,38 @@ def aplicar_estilos_y_totales(sheet, fila_nueva, responsable, ultima_cuota_aca):
         },
     )
 
-    if ultima_cuota_aca is not None:
-        col_letra = chr(74 + ultima_cuota_aca)  # 74 es 'J'
-        sheet.format(f"{col_letra}{fila_nueva}", {"backgroundColor": color})
+    # 3. REPARAR TOTALES: Buscar la fila de "TOTAL [Responsable]" y actualizar sus fórmulas
+    data = sheet.get_all_values()
+    fila_total = None
+    en_bloque_tarjeta = False
+
+    for i, row in enumerate(data):
+        row_str = " ".join(row).upper()
+        if tarjeta.upper() in row_str and "TOTAL" not in row_str:
+            en_bloque_tarjeta = True
+        if en_bloque_tarjeta and f"TOTAL {responsable.upper()}" in row_str:
+            fila_total = i + 1
+            break
+
+    if fila_total:
+        # Actualizamos las fórmulas de J a U para que sumen todo lo de arriba hasta la fila 2
+        for col_idx in range(10, 21):  # Columnas J a U
+            letra = chr(65 + col_idx)
+            # Ejemplo: =SUMAR.SI($D$2:$D$40; "Ale"; J$2:J$40)
+            formula = f'=SUMAR.SI($D$2:$D${fila_total-1}; "{responsable}"; {letra}$2:{letra}${fila_total-1})'
+            sheet.update_acell(f"{letra}{fila_total}", formula)
 
 
 # --- 3. PROCESO DE CARGA ---
-
-
 def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
     client = obtener_cliente()
     ss = client.open("Gastos 2026 - Tarjetas")
-
     monto_f = float(
         str(monto).replace("$", "").replace(".", "").replace(",", ".").strip()
     )
     cant_c = int(cuotas)
     val_c = monto_f / cant_c
     det_f = detalle.strip().title()
-
     meses = [
         "Enero",
         "Febrero",
@@ -177,8 +176,6 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
         data = sheet.get_all_values()
         f_ins = None
         en_bloque = False
-
-        # Buscar dónde insertar (antes del TOTAL del responsable en el bloque de la tarjeta)
         for i, row in enumerate(data):
             f_str = " ".join(row).upper()
             if tarjeta.upper() in f_str and "TOTAL" not in f_str:
@@ -186,60 +183,43 @@ def cargar_gasto(detalle, monto, cuotas, responsable, mes_inicio, tarjeta):
             if en_bloque and f"TOTAL {responsable.upper()}" in f_str:
                 f_ins = i + 1
                 break
-
         if f_ins is None:
             f_ins = len(data) + 1
 
-        # Insertar fila y dar formato
         sheet.insert_row([], f_ins)
         embellecer_fila(sheet, f_ins)
-
         prefijo = str(año_hoja)[2:]
         fila_datos = [
             datetime.now().strftime("%d/%m/%Y"),
-            det_f if año_hoja == 2026 else f"{det_f} (Cont.)",
-            "",  # Celda vacía para combinar C con B
+            det_f,
+            "",
             responsable,
-            "",  # Celda vacía para combinar E con D
+            "",
             f"{prefijo}-{mes_inicio[:3].lower()}",
             monto_f,
             cant_c,
             val_c,
         ]
 
-        ultima_idx = None
         for i in range(12):
-            if año_hoja == 2026:
-                if i >= idx_m and i < idx_m + cant_c:
-                    fila_datos.append(f"=$I{f_ins}")
-                    ultima_idx = i
-                else:
-                    fila_datos.append("")
+            if i >= idx_m and i < idx_m + cant_c:
+                fila_datos.append(f"=$I{f_ins}")
             else:
-                restantes = cant_c - (12 - idx_m)
-                if i < restantes:
-                    fila_datos.append(f"=$I{f_ins}")
-                    ultima_idx = i
-                else:
-                    fila_datos.append("")
+                fila_datos.append("")
 
         sheet.update(
             range_name=f"A{f_ins}",
             values=[fila_datos],
             value_input_option="USER_ENTERED",
         )
-        aplicar_estilos_y_totales(sheet, f_ins, responsable, ultima_idx)
-        return f_ins
+        aplicar_estilos_y_totales(sheet, f_ins, responsable, tarjeta)
 
-    f26 = procesar_hoja(2026)
+    procesar_hoja(2026)
     if idx_m + cant_c > 12:
         procesar_hoja(2027)
-    return f26
 
 
 # --- 4. INTERFAZ FLET ---
-
-
 def main(page: ft.Page):
     page.title = "Tarjetita"
     page.theme_mode = ft.ThemeMode.LIGHT
@@ -248,7 +228,6 @@ def main(page: ft.Page):
     page.padding = 20
 
     st = ft.Text("Listo para cargar", weight="bold")
-
     tar = ft.Dropdown(
         label="Tarjeta",
         value="VISA",
@@ -275,7 +254,6 @@ def main(page: ft.Page):
         options=[ft.dropdown.Option("Ale"), ft.dropdown.Option("Lu")],
         expand=1,
     )
-
     meses_lista = [
         "Enero",
         "Febrero",
@@ -303,14 +281,14 @@ def main(page: ft.Page):
             st.color = "red"
             page.update()
             return
-        st.value = "⏳ Conectando con la planilla..."
+        st.value = "⏳ Actualizando planilla y totales..."
         st.color = "blue"
         page.update()
         try:
             cargar_gasto(
                 det.value, mon.value, cuo.value, res.value, mes.value, tar.value
             )
-            st.value = "✅ ¡Gasto registrado!"
+            st.value = "✅ ¡Todo actualizado!"
             st.color = "green"
             det.value = ""
             mon.value = ""
