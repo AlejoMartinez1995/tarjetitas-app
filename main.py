@@ -128,6 +128,40 @@ def formatear_y_totalizar(sheet, tarjeta):
             }
         )
 
+        # --- AQUÍ ESTÁ EL AJUSTE DE COMBINACIÓN ---
+        # Solo combinamos si no es una fila de TOTAL (para no romper nada)
+        if "TOTAL" not in detalle.upper():
+            # Combinar B (1) con C (2)
+            requests.append(
+                {
+                    "mergeCells": {
+                        "range": {
+                            "sheetId": sheet.id,
+                            "startRowIndex": idx,
+                            "endRowIndex": r,
+                            "startColumnIndex": 1,
+                            "endColumnIndex": 3,
+                        },
+                        "mergeType": "MERGE_ALL",
+                    }
+                }
+            )
+            # Combinar D (3) con E (4)
+            requests.append(
+                {
+                    "mergeCells": {
+                        "range": {
+                            "sheetId": sheet.id,
+                            "startRowIndex": idx,
+                            "endRowIndex": r,
+                            "startColumnIndex": 3,
+                            "endColumnIndex": 5,
+                        },
+                        "mergeType": "MERGE_ALL",
+                    }
+                }
+            )
+
     # Aplicar cambios estéticos
     if requests:
         sheet.spreadsheet.batch_update({"requests": requests})
@@ -253,7 +287,7 @@ def main(page: ft.Page):
         label="Monto Total",
         keyboard_type=ft.KeyboardType.NUMBER,
         prefix=ft.Text("$ "),
-        width=290,
+        width=250,
     )
     cuo = ft.TextField(
         label="Cuotas", value="1", keyboard_type=ft.KeyboardType.NUMBER, width=100
@@ -262,7 +296,7 @@ def main(page: ft.Page):
         label="Responsable",
         value="Ale",
         options=[ft.dropdown.Option("Ale"), ft.dropdown.Option("Lu")],
-        width=190,
+        width=150,
     )
 
     meses_l = [
