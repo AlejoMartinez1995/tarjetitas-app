@@ -247,7 +247,7 @@ def main(page: ft.Page):
     det = ft.TextField(
         label="Detalle de compra",
         capitalization=ft.TextCapitalization.SENTENCES,
-        width=300,
+        width=400,
     )
     mon = ft.TextField(
         label="Monto Total",
