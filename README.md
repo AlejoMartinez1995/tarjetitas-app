@@ -45,6 +45,5 @@ Si querés probar la aplicación de forma local en tu computadora, seguí estos 
 ### 📸 Vista previa de la aplicación
 
 <p align="center">
-  <img src="Screenshots/dashboard.png" alt="Dashboard Principal" width="45%">
-  <img src="Screenshots/graficos.png" alt="Análisis de Gastos" width="45%">
+  <img src="screenshots/dashboard.png" alt="Dashboard Principal" width="45%">
 </p>
